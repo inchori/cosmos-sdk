@@ -15,6 +15,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
+// StakingPowerUpgradeHeight defines the block height after which messages that
+// would impact staking power are no longer supported.
+const StakingPowerUpgradeHeight = 7603700
+
 // StakingPowerRevertHeight re-enables the creation of validators after this
 // block height.  This has been computed as approximately October 26, 2022.  84 days from August 3
 // 10 * 60 min * 24 hrs * 84 days = 1,209,600 blocks

@@ -252,7 +252,7 @@ func execFilterPaginate(store sdk.KVStore, pageReq *query.PageRequest, appCodec 
 }
 
 func (s *paginationTestSuite) TestFilteredPaginationsNextKey() {
-	app, ctx, appCodec := setupTest(s.T())
+	app, ctx, appCodec := setupTest()
 
 	var balances sdk.Coins
 
@@ -265,7 +265,7 @@ func (s *paginationTestSuite) TestFilteredPaginationsNextKey() {
 	addr1 := sdk.AccAddress([]byte("addr1"))
 	acc1 := app.AccountKeeper.NewAccountWithAddress(ctx, addr1)
 	app.AccountKeeper.SetAccount(ctx, acc1)
-	s.Require().NoError(testutil.FundAccount(app.BankKeeper, ctx, addr1, balances))
+	s.Require().NoError(simapp.FundAccount(app.BankKeeper, ctx, addr1, balances))
 	store := ctx.KVStore(app.GetKey(types.StoreKey))
 
 	execFilterPaginate := func(store sdk.KVStore, pageReq *query.PageRequest, appCodec codec.Codec) (balances sdk.Coins, res *query.PageResponse, err error) {

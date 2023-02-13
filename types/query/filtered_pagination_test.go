@@ -275,7 +275,6 @@ func (s *paginationTestSuite) TestFilteredPaginationsNextKey() {
 		var balResult sdk.Coins
 		res, err = query.FilteredPaginate(accountStore, pageReq, func(key []byte, value []byte, accumulate bool) (bool, error) {
 			var currCoin sdk.Coin
-			//TODO: Figure out why this is returning a prefixed value, rather then the raw integer value.
 			err := currCoin.Unmarshal(value)
 			if err != nil {
 				return false, err

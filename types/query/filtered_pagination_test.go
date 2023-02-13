@@ -274,16 +274,17 @@ func (s *paginationTestSuite) TestFilteredPaginationsNextKey() {
 
 		var balResult sdk.Coins
 		res, err = query.FilteredPaginate(accountStore, pageReq, func(key []byte, value []byte, accumulate bool) (bool, error) {
-			var amount sdk.Int
-			err := amount.Unmarshal(value)
+			var currCoin sdk.Coin
+			//TODO: Figure out why this is returning a prefixed value, rather then the raw integer value.
+			err := currCoin.Unmarshal(value)
 			if err != nil {
 				return false, err
 			}
 
 			// filter odd amounts
-			if amount.Int64()%2 == 1 {
+			if currCoin.Amount.Int64()%2 == 1 {
 				if accumulate {
-					balResult = append(balResult, sdk.NewCoin(string(key), amount))
+					balResult = append(balResult, sdk.NewCoin(string(key), currCoin.Amount))
 				}
 
 				return true, nil

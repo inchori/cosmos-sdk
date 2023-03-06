@@ -656,7 +656,7 @@ func (k Keeper) Delegate(
 
 	currHeight := ctx.BlockHeight()
 	// If Delegations are allowed again, limit validator power to 20%
-        if currHeight >= DelegatePowerRevertHeight {
+	if currHeight >= DelegatePowerRevertHeight {
 		// Get the last Total Power of the validator set
 		lastPower := k.GetLastTotalPower(ctx)
 
@@ -674,7 +674,7 @@ func (k Keeper) Delegate(
 
 		// If Delegations are allowed, and the Delegation would have increased the Validator to over 20% of the staking power, do not allow the Delegation to proceed
 		if validatorIncreasedDelegationPercent > 0.2 {
-		        panic("validator power is over the allowed limit")
+			panic("validator power is over the allowed limit")
 		}
 	}
 	// if subtractAccount is true then we are

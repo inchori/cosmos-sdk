@@ -33,26 +33,22 @@ module.exports = {
     editLinks: true,
     label: "sdk",
     algolia: {
-      id: "BH4D9OD16A",
-      key: "ac317234e6a42074175369b2f42e9754",
-      index: "cosmos-sdk"
+      id: "QLS2QSP47E",
+      key: "4d9feeb481e3cfef8f91bbc63e090042",
+      index: "cosmos_network_vue"
     },
     versions: [
-      {
-        "label": "v0.39",
-        "key": "v0.39"
-      },
-      {
-        "label": "v0.42",
-        "key": "v0.42"
-      },
       {
         "label": "v0.44",
         "key": "v0.44"
       },
       {
-        "label": "master",
-        "key": "master"
+        "label": "v0.45",
+        "key": "v0.45"
+      },
+      {
+        "label": "main",
+        "key": "main"
       }
     ],
     topbar: {
@@ -189,7 +185,7 @@ module.exports = {
             {
               title: "Contributing to the docs",
               url:
-                "https://github.com/cosmos/cosmos-sdk/blob/master/docs/DOCS_README.md"
+                "https://github.com/cosmos/cosmos-sdk/blob/main/docs/DOCS_README.md"
             },
             {
               title: "Source code on GitHub",

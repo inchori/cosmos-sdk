@@ -255,7 +255,7 @@ func (k msgServer) Delegate(goCtx context.Context, msg *types.MsgDelegate) (*typ
 		ctx.Logger().Info(fmt.Sprintf("lastPower of Validator is %d", validatorLastPower))
 
 		// Compute what the Validator's new power would be if this Delegation goes through
-		validatorNewPower := int64(validatorLastPower) + sdk.TokensToConsensusPower(msg.Amount.Amount, k.Keeper.PowerReduction(ctx))
+		validatorNewPower := validatorLastPower + sdk.TokensToConsensusPower(msg.Amount.Amount, k.Keeper.PowerReduction(ctx))
 
 		// Compute what the Total Consensus Power would be if this Delegation goes through
 		newTotalPower := lastPower.Int64() + sdk.TokensToConsensusPower(msg.Amount.Amount, k.Keeper.PowerReduction(ctx))

@@ -22,7 +22,7 @@ minimum-gas-prices = "{{ .BaseConfig.MinGasPrices }}"
 
 # default: the last 100 states are kept in addition to every 500th state; pruning at 10 block intervals
 # nothing: all historic states will be saved, nothing will be deleted (i.e. archiving node)
-# everything: all saved states will be deleted, storing only the current state; pruning at 10 block intervals
+# everything: all saved states will be deleted, storing only the current and previous state; pruning at 10 block intervals
 # custom: allow pruning options to be manually specified through 'pruning-keep-recent', 'pruning-keep-every', and 'pruning-interval'
 pruning = "{{ .BaseConfig.Pruning }}"
 
@@ -81,6 +81,10 @@ index-events = {{ .BaseConfig.IndexEvents }}
 # Default cache size is 100mb.
 # Ex) 100mb = 100,000,000 / 128 = 781,250
 iavl-cache-size = {{ .BaseConfig.IAVLCacheSize }}
+
+# IAVLDisableFastNode enables or disables the fast node feature of IAVL. 
+# Default is true.
+iavl-disable-fastnode = {{ .BaseConfig.IAVLDisableFastNode }}
 
 ###############################################################################
 ###                         Telemetry Configuration                         ###
@@ -213,6 +217,29 @@ snapshot-interval = {{ .StateSync.SnapshotInterval }}
 
 # snapshot-keep-recent specifies the number of recent snapshots to keep and serve (0 to keep all).
 snapshot-keep-recent = {{ .StateSync.SnapshotKeepRecent }}
+
+###############################################################################
+###                         Store / State Streaming                         ###
+###############################################################################
+
+[store]
+streamers = [{{ range .Store.Streamers }}{{ printf "%q, " . }}{{end}}]
+
+[streamers]
+[streamers.file]
+keys = [{{ range .Streamers.File.Keys }}{{ printf "%q, " . }}{{end}}]
+write_dir = "{{ .Streamers.File.WriteDir }}"
+prefix = "{{ .Streamers.File.Prefix }}"
+
+# output-metadata specifies if output the metadata file which includes the abci request/responses 
+# during processing the block.
+output-metadata = "{{ .Streamers.File.OutputMetadata }}"
+
+# stop-node-on-error specifies if propagate the file streamer errors to consensus state machine.
+stop-node-on-error = "{{ .Streamers.File.StopNodeOnError }}"
+
+# fsync specifies if call fsync after writing the files.
+fsync = "{{ .Streamers.File.Fsync }}"
 `
 
 var configTemplate *template.Template
@@ -257,5 +284,5 @@ func WriteConfigFile(configFilePath string, config interface{}) {
 		panic(err)
 	}
 
-	tmos.MustWriteFile(configFilePath, buffer.Bytes(), 0644)
+	tmos.MustWriteFile(configFilePath, buffer.Bytes(), 0o644)
 }

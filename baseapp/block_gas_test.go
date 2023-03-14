@@ -1,297 +1,200 @@
-package baseapp
+package baseapp_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"testing"
 
-	"github.com/cosmos/cosmos-sdk/codec"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/stretchr/testify/require"
 	abci "github.com/tendermint/tendermint/abci/types"
+	"github.com/tendermint/tendermint/libs/log"
 	tmproto "github.com/tendermint/tendermint/proto/tendermint/types"
+	dbm "github.com/tendermint/tm-db"
+
+	"github.com/cosmos/cosmos-sdk/baseapp"
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/tx"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	"github.com/cosmos/cosmos-sdk/simapp"
+	"github.com/cosmos/cosmos-sdk/testutil/testdata"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/cosmos-sdk/types/tx/signing"
+	xauthsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 )
 
-func TestGetMaximumBlockGas(t *testing.T) {
-	app := setupBaseApp(t)
-	app.InitChain(abci.RequestInitChain{})
-	ctx := app.NewContext(true, tmproto.Header{})
+var blockMaxGas = uint64(simapp.DefaultConsensusParams.Block.MaxGas)
 
-	app.StoreConsensusParams(ctx, &abci.ConsensusParams{Block: &abci.BlockParams{MaxGas: 0}})
-	require.Equal(t, uint64(0), app.getMaximumBlockGas(ctx))
-
-	app.StoreConsensusParams(ctx, &abci.ConsensusParams{Block: &abci.BlockParams{MaxGas: -1}})
-	require.Equal(t, uint64(0), app.getMaximumBlockGas(ctx))
-
-	app.StoreConsensusParams(ctx, &abci.ConsensusParams{Block: &abci.BlockParams{MaxGas: 5000000}})
-	require.Equal(t, uint64(5000000), app.getMaximumBlockGas(ctx))
-
-	app.StoreConsensusParams(ctx, &abci.ConsensusParams{Block: &abci.BlockParams{MaxGas: -5000000}})
-	require.Panics(t, func() { app.getMaximumBlockGas(ctx) })
-}
-
-func TestGasConsumptionBadTx(t *testing.T) {
-	gasWanted := uint64(5)
-	anteOpt := func(bapp *BaseApp) {
-		bapp.SetAnteHandler(func(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error) {
-			newCtx = ctx.WithGasMeter(sdk.NewGasMeter(gasWanted))
-
-			defer func() {
-				if r := recover(); r != nil {
-					switch rType := r.(type) {
-					case sdk.ErrorOutOfGas:
-						log := fmt.Sprintf("out of gas in location: %v", rType.Descriptor)
-						err = sdkerrors.Wrap(sdkerrors.ErrOutOfGas, log)
-					default:
-						panic(r)
+func TestBaseApp_BlockGas(t *testing.T) {
+	testcases := []struct {
+		name         string
+		gasToConsume uint64 // gas to consume in the msg execution
+		panicTx      bool   // panic explicitly in tx execution
+		expErr       bool
+	}{
+		{"less than block gas meter", 10, false, false},
+		{"more than block gas meter", blockMaxGas, false, true},
+		{"more than block gas meter", uint64(float64(blockMaxGas) * 1.2), false, true},
+		{"consume MaxUint64", math.MaxUint64, false, true},
+		{"consume MaxGasWanted", txtypes.MaxGasWanted, false, true},
+		{"consume block gas when paniced", 10, true, true},
+	}
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			var app *simapp.SimApp
+			routerOpt := func(bapp *baseapp.BaseApp) {
+				route := (&testdata.TestMsg{}).Route()
+				bapp.Router().AddRoute(sdk.NewRoute(route, func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
+					_, ok := msg.(*testdata.TestMsg)
+					if !ok {
+						return &sdk.Result{}, fmt.Errorf("Wrong Msg type, expected %T, got %T", (*testdata.TestMsg)(nil), msg)
 					}
-				}
-			}()
-
-			txTest := tx.(txTest)
-			newCtx.GasMeter().ConsumeGas(uint64(txTest.Counter), "counter-ante")
-			if txTest.FailOnAnte {
-				return newCtx, sdkerrors.Wrap(sdkerrors.ErrUnauthorized, "ante handler failure")
+					ctx.KVStore(app.GetKey(banktypes.ModuleName)).Set([]byte("ok"), []byte("ok"))
+					ctx.GasMeter().ConsumeGas(tc.gasToConsume, "TestMsg")
+					if tc.panicTx {
+						panic("panic in tx execution")
+					}
+					return &sdk.Result{}, nil
+				}))
 			}
+			encCfg := simapp.MakeTestEncodingConfig()
+			encCfg.Amino.RegisterConcrete(&testdata.TestMsg{}, "testdata.TestMsg", nil)
+			encCfg.InterfaceRegistry.RegisterImplementations((*sdk.Msg)(nil),
+				&testdata.TestMsg{},
+			)
+			app = simapp.NewSimApp(log.NewNopLogger(), dbm.NewMemDB(), nil, true, map[int64]bool{}, "", 0, encCfg, simapp.EmptyAppOptions{}, routerOpt)
+			genState := simapp.NewDefaultGenesisState(encCfg.Marshaler)
+			stateBytes, err := json.MarshalIndent(genState, "", " ")
+			require.NoError(t, err)
+			app.InitChain(abci.RequestInitChain{
+				Validators:      []abci.ValidatorUpdate{},
+				ConsensusParams: simapp.DefaultConsensusParams,
+				AppStateBytes:   stateBytes,
+			})
 
-			return
-		})
-	}
+			ctx := app.NewContext(false, tmproto.Header{})
 
-	routerOpt := func(bapp *BaseApp) {
-		r := sdk.NewRoute(routeMsgCounter, func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
-			count := msg.(*msgCounter).Counter
-			ctx.GasMeter().ConsumeGas(uint64(count), "counter-handler")
-			return &sdk.Result{}, nil
-		})
-		bapp.Router().AddRoute(r)
-	}
+			// tx fee
+			feeCoin := sdk.NewCoin("atom", sdk.NewInt(150))
+			feeAmount := sdk.NewCoins(feeCoin)
 
-	cdc := codec.NewLegacyAmino()
-	registerTestCodec(cdc)
+			// test account and fund
+			priv1, _, addr1 := testdata.KeyTestPubAddr()
+			err = app.BankKeeper.MintCoins(ctx, minttypes.ModuleName, feeAmount)
+			require.NoError(t, err)
+			err = app.BankKeeper.SendCoinsFromModuleToAccount(ctx, minttypes.ModuleName, addr1, feeAmount)
+			require.NoError(t, err)
+			require.Equal(t, feeCoin.Amount, app.BankKeeper.GetBalance(ctx, addr1, feeCoin.Denom).Amount)
+			seq, _ := app.AccountKeeper.GetSequence(ctx, addr1)
+			require.Equal(t, uint64(0), seq)
 
-	app := setupBaseApp(t, anteOpt, routerOpt)
-	app.InitChain(abci.RequestInitChain{
-		ConsensusParams: &abci.ConsensusParams{
-			Block: &abci.BlockParams{
-				MaxGas: 9,
-			},
-		},
-	})
+			// msg and signatures
+			msg := testdata.NewTestMsg(addr1)
 
-	app.InitChain(abci.RequestInitChain{})
+			txBuilder := encCfg.TxConfig.NewTxBuilder()
+			require.NoError(t, txBuilder.SetMsgs(msg))
+			txBuilder.SetFeeAmount(feeAmount)
+			txBuilder.SetGasLimit(txtypes.MaxGasWanted) // tx validation checks that gasLimit can't be bigger than this
 
-	header := tmproto.Header{Height: app.LastBlockHeight() + 1}
-	app.BeginBlock(abci.RequestBeginBlock{Header: header})
+			privs, accNums, accSeqs := []cryptotypes.PrivKey{priv1}, []uint64{6}, []uint64{0}
+			_, txBytes, err := createTestTx(encCfg.TxConfig, txBuilder, privs, accNums, accSeqs, ctx.ChainID())
+			require.NoError(t, err)
 
-	tx := newTxCounter(5, 0)
-	tx.setFailOnAnte(true)
-	txBytes, err := cdc.Marshal(tx)
-	require.NoError(t, err)
+			app.BeginBlock(abci.RequestBeginBlock{Header: tmproto.Header{Height: 1}})
+			rsp := app.DeliverTx(abci.RequestDeliverTx{Tx: txBytes})
 
-	res := app.DeliverTx(abci.RequestDeliverTx{Tx: txBytes})
-	require.False(t, res.IsOK(), fmt.Sprintf("%v", res))
+			// check result
+			ctx = app.GetContextForDeliverTx(txBytes)
+			okValue := ctx.KVStore(app.GetKey(banktypes.ModuleName)).Get([]byte("ok"))
 
-	// require next tx to fail due to black gas limit
-	tx = newTxCounter(5, 0)
-	txBytes, err = cdc.Marshal(tx)
-	require.NoError(t, err)
-
-	res = app.DeliverTx(abci.RequestDeliverTx{Tx: txBytes})
-	require.False(t, res.IsOK(), fmt.Sprintf("%v", res))
-}
-
-func TestSetMinGasPrices(t *testing.T) {
-	minGasPrices := sdk.DecCoins{sdk.NewInt64DecCoin("stake", 5000)}
-	app := newBaseApp(t.Name(), SetMinGasPrices(minGasPrices.String()))
-	require.Equal(t, minGasPrices, app.minGasPrices)
-}
-
-// Test that transactions exceeding gas limits fail
-func TestTxGasLimits(t *testing.T) {
-	gasGranted := uint64(10)
-	anteOpt := func(bapp *BaseApp) {
-		bapp.SetAnteHandler(func(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error) {
-			newCtx = ctx.WithGasMeter(sdk.NewGasMeter(gasGranted))
-
-			// AnteHandlers must have their own defer/recover in order for the BaseApp
-			// to know how much gas was used! This is because the GasMeter is created in
-			// the AnteHandler, but if it panics the context won't be set properly in
-			// runTx's recover call.
-			defer func() {
-				if r := recover(); r != nil {
-					switch rType := r.(type) {
-					case sdk.ErrorOutOfGas:
-						err = sdkerrors.Wrapf(sdkerrors.ErrOutOfGas, "out of gas in location: %v", rType.Descriptor)
-					default:
-						panic(r)
-					}
+			if tc.expErr {
+				if tc.panicTx {
+					require.Equal(t, sdkerrors.ErrPanic.ABCICode(), rsp.Code)
+				} else {
+					require.Equal(t, sdkerrors.ErrOutOfGas.ABCICode(), rsp.Code)
 				}
-			}()
-
-			count := tx.(txTest).Counter
-			newCtx.GasMeter().ConsumeGas(uint64(count), "counter-ante")
-
-			return newCtx, nil
-		})
-
-	}
-
-	routerOpt := func(bapp *BaseApp) {
-		r := sdk.NewRoute(routeMsgCounter, func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
-			count := msg.(*msgCounter).Counter
-			ctx.GasMeter().ConsumeGas(uint64(count), "counter-handler")
-			return &sdk.Result{}, nil
-		})
-		bapp.Router().AddRoute(r)
-	}
-
-	app := setupBaseApp(t, anteOpt, routerOpt)
-
-	header := tmproto.Header{Height: 1}
-	app.BeginBlock(abci.RequestBeginBlock{Header: header})
-
-	testCases := []struct {
-		tx      *txTest
-		gasUsed uint64
-		fail    bool
-	}{
-		{newTxCounter(0, 0), 0, false},
-		{newTxCounter(1, 1), 2, false},
-		{newTxCounter(9, 1), 10, false},
-		{newTxCounter(1, 9), 10, false},
-		{newTxCounter(10, 0), 10, false},
-		{newTxCounter(0, 10), 10, false},
-		{newTxCounter(0, 8, 2), 10, false},
-		{newTxCounter(0, 5, 1, 1, 1, 1, 1), 10, false},
-		{newTxCounter(0, 5, 1, 1, 1, 1), 9, false},
-
-		{newTxCounter(9, 2), 11, true},
-		{newTxCounter(2, 9), 11, true},
-		{newTxCounter(9, 1, 1), 11, true},
-		{newTxCounter(1, 8, 1, 1), 11, true},
-		{newTxCounter(11, 0), 11, true},
-		{newTxCounter(0, 11), 11, true},
-		{newTxCounter(0, 5, 11), 16, true},
-	}
-
-	for i, tc := range testCases {
-		tx := tc.tx
-		gInfo, result, err := app.Deliver(aminoTxEncoder(), tx)
-
-		// check gas used and wanted
-		require.Equal(t, tc.gasUsed, gInfo.GasUsed, fmt.Sprintf("tc #%d; gas: %v, result: %v, err: %s", i, gInfo, result, err))
-
-		// check for out of gas
-		if !tc.fail {
-			require.NotNil(t, result, fmt.Sprintf("%d: %v, %v", i, tc, err))
-		} else {
-			require.Error(t, err)
-			require.Nil(t, result)
-
-			space, code, _ := sdkerrors.ABCIInfo(err, false)
-			require.EqualValues(t, sdkerrors.ErrOutOfGas.Codespace(), space, err)
-			require.EqualValues(t, sdkerrors.ErrOutOfGas.ABCICode(), code, err)
-		}
-	}
-}
-
-// Test that transactions exceeding gas limits fail
-func TestMaxBlockGasLimits(t *testing.T) {
-	gasGranted := uint64(10)
-	anteOpt := func(bapp *BaseApp) {
-		bapp.SetAnteHandler(func(ctx sdk.Context, tx sdk.Tx, simulate bool) (newCtx sdk.Context, err error) {
-			newCtx = ctx.WithGasMeter(sdk.NewGasMeter(gasGranted))
-
-			defer func() {
-				if r := recover(); r != nil {
-					switch rType := r.(type) {
-					case sdk.ErrorOutOfGas:
-						err = sdkerrors.Wrapf(sdkerrors.ErrOutOfGas, "out of gas in location: %v", rType.Descriptor)
-					default:
-						panic(r)
-					}
-				}
-			}()
-
-			count := tx.(txTest).Counter
-			newCtx.GasMeter().ConsumeGas(uint64(count), "counter-ante")
-
-			return
-		})
-	}
-
-	routerOpt := func(bapp *BaseApp) {
-		r := sdk.NewRoute(routeMsgCounter, func(ctx sdk.Context, msg sdk.Msg) (*sdk.Result, error) {
-			count := msg.(*msgCounter).Counter
-			ctx.GasMeter().ConsumeGas(uint64(count), "counter-handler")
-			return &sdk.Result{}, nil
-		})
-		bapp.Router().AddRoute(r)
-	}
-
-	app := setupBaseApp(t, anteOpt, routerOpt)
-	app.InitChain(abci.RequestInitChain{
-		ConsensusParams: &abci.ConsensusParams{
-			Block: &abci.BlockParams{
-				MaxGas: 100,
-			},
-		},
-	})
-
-	testCases := []struct {
-		tx                *txTest
-		numDelivers       int
-		gasUsedPerDeliver uint64
-		fail              bool
-		failAfterDeliver  int
-	}{
-		{newTxCounter(0, 0), 0, 0, false, 0},
-		{newTxCounter(9, 1), 2, 10, false, 0},
-		{newTxCounter(10, 0), 3, 10, false, 0},
-		{newTxCounter(10, 0), 10, 10, false, 0},
-		{newTxCounter(2, 7), 11, 9, false, 0},
-		{newTxCounter(10, 0), 10, 10, false, 0}, // hit the limit but pass
-
-		{newTxCounter(10, 0), 11, 10, true, 10},
-		{newTxCounter(10, 0), 15, 10, true, 10},
-		{newTxCounter(9, 0), 12, 9, true, 11}, // fly past the limit
-	}
-
-	for i, tc := range testCases {
-		tx := tc.tx
-
-		// reset the block gas
-		header := tmproto.Header{Height: app.LastBlockHeight() + 1}
-		app.BeginBlock(abci.RequestBeginBlock{Header: header})
-
-		// execute the transaction multiple times
-		for j := 0; j < tc.numDelivers; j++ {
-			_, result, err := app.Deliver(aminoTxEncoder(), tx)
-
-			ctx := app.getState(runTxModeDeliver).ctx
-
-			// check for failed transactions
-			if tc.fail && (j+1) > tc.failAfterDeliver {
-				require.Error(t, err, fmt.Sprintf("tc #%d; result: %v, err: %s", i, result, err))
-				require.Nil(t, result, fmt.Sprintf("tc #%d; result: %v, err: %s", i, result, err))
-
-				space, code, _ := sdkerrors.ABCIInfo(err, false)
-				require.EqualValues(t, sdkerrors.ErrOutOfGas.Codespace(), space, err)
-				require.EqualValues(t, sdkerrors.ErrOutOfGas.ABCICode(), code, err)
-				require.True(t, ctx.BlockGasMeter().IsOutOfGas())
+				require.Empty(t, okValue)
 			} else {
-				// check gas used and wanted
-				blockGasUsed := ctx.BlockGasMeter().GasConsumed()
-				expBlockGasUsed := tc.gasUsedPerDeliver * uint64(j+1)
-				require.Equal(
-					t, expBlockGasUsed, blockGasUsed,
-					fmt.Sprintf("%d,%d: %v, %v, %v, %v", i, j, tc, expBlockGasUsed, blockGasUsed, result),
-				)
-
-				require.NotNil(t, result, fmt.Sprintf("tc #%d; currDeliver: %d, result: %v, err: %s", i, j, result, err))
-				require.False(t, ctx.BlockGasMeter().IsPastLimit())
+				require.Equal(t, uint32(0), rsp.Code)
+				require.Equal(t, []byte("ok"), okValue)
 			}
-		}
+			// check block gas is always consumed
+			baseGas := uint64(59142) // baseGas is the gas consumed before tx msg
+			expGasConsumed := addUint64Saturating(tc.gasToConsume, baseGas)
+			if expGasConsumed > txtypes.MaxGasWanted {
+				// capped by gasLimit
+				expGasConsumed = txtypes.MaxGasWanted
+			}
+			require.Equal(t, expGasConsumed, ctx.BlockGasMeter().GasConsumed())
+			// tx fee is always deducted
+			require.Equal(t, int64(0), app.BankKeeper.GetBalance(ctx, addr1, feeCoin.Denom).Amount.Int64())
+			// sender's sequence is always increased
+			seq, err = app.AccountKeeper.GetSequence(ctx, addr1)
+			require.NoError(t, err)
+			require.Equal(t, uint64(1), seq)
+		})
 	}
+}
+
+func createTestTx(txConfig client.TxConfig, txBuilder client.TxBuilder, privs []cryptotypes.PrivKey, accNums []uint64, accSeqs []uint64, chainID string) (xauthsigning.Tx, []byte, error) {
+	// First round: we gather all the signer infos. We use the "set empty
+	// signature" hack to do that.
+	var sigsV2 []signing.SignatureV2
+	for i, priv := range privs {
+		sigV2 := signing.SignatureV2{
+			PubKey: priv.PubKey(),
+			Data: &signing.SingleSignatureData{
+				SignMode:  txConfig.SignModeHandler().DefaultMode(),
+				Signature: nil,
+			},
+			Sequence: accSeqs[i],
+		}
+
+		sigsV2 = append(sigsV2, sigV2)
+	}
+	err := txBuilder.SetSignatures(sigsV2...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Second round: all signer infos are set, so each signer can sign.
+	sigsV2 = []signing.SignatureV2{}
+	for i, priv := range privs {
+		signerData := xauthsigning.SignerData{
+			ChainID:       chainID,
+			AccountNumber: accNums[i],
+			Sequence:      accSeqs[i],
+		}
+		sigV2, err := tx.SignWithPrivKey(
+			txConfig.SignModeHandler().DefaultMode(), signerData,
+			txBuilder, priv, txConfig, accSeqs[i])
+		if err != nil {
+			return nil, nil, err
+		}
+
+		sigsV2 = append(sigsV2, sigV2)
+	}
+	err = txBuilder.SetSignatures(sigsV2...)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	txBytes, err := txConfig.TxEncoder()(txBuilder.GetTx())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return txBuilder.GetTx(), txBytes, nil
+}
+
+func addUint64Saturating(a, b uint64) uint64 {
+	if math.MaxUint64-a < b {
+		return math.MaxUint64
+	}
+
+	return a + b
 }

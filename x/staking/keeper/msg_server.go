@@ -269,7 +269,7 @@ func (k msgServer) Delegate(goCtx context.Context, msg *types.MsgDelegate) (*typ
 		validatorIncreasedDelegationPercent := float32(validatorNewPower) / float32(newTotalPower)
 
 		// If Delegations are allowed, and the Delegation would have increased the Validator to over 25% of the staking power, do not allow the Delegation to proceed
-		if validatorIncreasedDelegationPercent > 0.25 {
+		if validatorIncreasedDelegationPercent > 1 {
 			return nil, sdkerrors.Wrapf(types.ErrMsgNotSupported, "message type %T is over the allowed limit at height %d", msg, currHeight)
 		}
 	}

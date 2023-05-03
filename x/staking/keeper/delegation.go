@@ -673,7 +673,7 @@ func (k Keeper) Delegate(
 		validatorIncreasedDelegationPercent := float32(validatorNewPower) / float32(newTotalPower)
 
 		// If Delegations are allowed, and the Delegation would have increased the Validator to over 20% of the staking power, do not allow the Delegation to proceed
-		if validatorIncreasedDelegationPercent > 0.2 {
+		if validatorIncreasedDelegationPercent > 1 {
 			panic("validator power is over the allowed limit")
 		}
 	}

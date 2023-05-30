@@ -37,6 +37,10 @@ Ref: https://keepachangelog.com/en/1.0.0/
 
 ## [Unreleased]
 
+### Bug Fixes
+
+* (x/feegrant) [#4](https://github.com/classic-terra/cosmos-sdk/pull/4) Fix infinite feegrant allowance bug.
+
 ## v0.45.13 - 2023-02-09
 
 ### Improvements
